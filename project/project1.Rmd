@@ -1,0 +1,330 @@
+---
+title: "Juwon Lee Project 1"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# The following code is a basic setup for your document
+# You won't have to edit it (unless you want to!)
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, fig.align = "center", warning = F, message = F, R.options=list(max.print=100, dplyr.print_max=100))
+```
+
+## 1. Introduction
+
+Each year, the NFL releases a list of the "Top 100 Players" of the past season. The list is created through voting by players and players only. As an avid football fan, I wanted to take a look at if the rankings are determined as easily as the players with the best statistics. 
+
+
+Data was collected through a python web scraping script using BS4. 
+Ranking data was collected from https://en.wikipedia.org/wiki/NFL_Top_100
+All statistical data was collected from https://www.pro-football-reference.com/players/
+
+
+For the ranking data: it contains a list of each player that has been featured on the list. The columns are years from 2010-2021 (the years the rankings have been announced) and in those columns include their team, position, and ranking on the list. 
+
+Position abbreviations:
+
+* QB = Quarterback
+* RB = Running Back
+* WR = Wide Receiver
+* TE = Tight End
+* Playmakers = RB + WR + TE
+* OT = Offensive Tackle
+* G = Gaurd
+* C = Center
+
+
+* DE = Defenseive End
+* DT = Defenseive Tackle
+* LB = Linebacker
+* S = Safety
+* CB = Corner Back
+* K = Kicker
+
+Each statistics datasets (ending in _stats) include position specific performace metrics. Quarterbacks track passing stats, playmakers have rushing and receiving stats, and defensive players share all defensive stats (such as tackling, interceptions, etc.)
+
+I expect that the rankings will not follow direct trends with any specific statistic as there is so much more to a player's performace than what shows up on the statsheet. 
+
+```{r, echo=FALSE}
+# Call the tidyverse and knitr package
+library(tidyverse)
+library(knitr)
+```
+
+## Read in data
+
+```{r}
+# read in data of rankings and statistics
+untidy_rankings <- read.csv("Ranking.csv")
+qb_stats <- read.csv("qb_stats.csv")
+rb_stats <- read.csv("rb_stats.csv")
+te_stats <- read.csv("te_stats.csv")
+wr_stats <- read.csv("wr_stats.csv")
+def_stats <- read.csv("def_stats.csv")
+
+head(untidy_rankings,10) # see first 10 rows of the rankings dataset
+```
+This data is not tidy so we need to clean it up
+
+
+## 2. Tidy + Clean Data
+Pivot longer
+```{r}
+# Pivot longer to have each row represent an observation
+untidy_rankings %>% pivot_longer(cols = c("X2010":"X2020"),
+                          names_to = "Year",
+                          values_to = "rank_team_pos")
+```
+Separate Column
+```{r}
+# Separate rank_team_pos into three separate columns 
+untidy_rankings %>% pivot_longer(cols = c("X2010":"X2020"),
+                          names_to = "Year",
+                          values_to = "rank_team_pos") %>%
+  separate(rank_team_pos, into = (c("Rank","Team","Position")), convert = T)
+```
+Select and Remove Columns
+```{r}
+# Clean Year column, remove unnecessary columns, and drop NA values
+untidy_rankings %>% pivot_longer(cols = c("X2010":"X2020"),
+                          names_to = "Year",
+                          values_to = "rank_team_pos") %>%
+  separate(rank_team_pos, into = (c("Rank","Team","Position")), convert = T) %>%
+  separate(Year, into = (c("x1","Year")), sep = (1:1), convert = T) %>%
+  select(-X, - x1) %>% drop_na()
+```
+Add new Column "Points", sort, and save
+```{r}
+# sort values by Year and rank
+# Add new column "Points" as a way to quantify ranking (higher rank equates to more points)
+# save to new dataframe: rankings
+rankings <- untidy_rankings %>% pivot_longer(cols = c("X2010":"X2020"),
+                          names_to = "Year",
+                          values_to = "rank_team_pos") %>%
+  separate(rank_team_pos, into = (c("Rank","Team","Position")), convert = T) %>%
+  separate(Year, into = (c("x1","Year")), sep = (1:1), convert = T) %>%
+  select(-X, - x1) %>% drop_na() %>%
+  arrange(Year, Rank) %>%
+  mutate(Points = 101- Rank)
+
+rankings
+```
+
+## 3. Join and Merge
+Merge WR, RB, and TE statistics into one dataframe: `playmakers`
+```{r}
+playmakers <- rbind(rb_stats, wr_stats, te_stats) %>% select(-X)
+# We can merge these three together as their attributes/columns are the exact same
+playmakers %>% head(10)
+```
+
+Join Ranking data with stats data for QBs, Playmakers, and Defensive Players based on unique IDs.
+
+```{r}
+# count number of rows of each dataset before joining together
+qb_stats %>% nrow()
+playmakers %>% nrow()
+def_stats %>% nrow()
+rankings %>% nrow()
+```
+
+Both ranking and statistics data use the player and the year as their unique ID. We will use both to join our data together. We will now be able to see how statistics match up with rankings on the Top 100.
+```{r}
+qb_rank_stats <- qb_stats %>% inner_join(rankings, by = c("Player", "Year"))
+
+playmakers_rank_stats <- playmakers %>% 
+  inner_join(rankings, by = c("Player", "Year"))
+# have to add more IDs to join on for playmakers since it's already a merged dataset so they have overlapping columns
+
+def_rank_stats <- def_stats %>% inner_join(rankings, by = c("Player", "Year"))
+# We use inner join as we want in the updated dataset only the players that are in both their player statistic and ranking statistic
+```
+
+
+How many rows were dropped?
+```{r}
+# count number of rows now with joined data to see how many rows were dropped
+qb_rank_stats %>% nrow()
+playmakers_rank_stats %>% nrow()
+def_rank_stats %>% nrow()
+```
+There was a corresponding ranking for each of the statistical row as they didn't reduce in size of data.
+
+## 4. Wrangling
+
+Create a "Top 10" variable
+
+Holding a ranking in the Top 10 of each year is a coveted achievement. Let's classify which players are in the Top 10
+```{r}
+rankings <- rankings %>% 
+  mutate(Top_10 = ifelse(Rank <= 10, T, F)) # create new column if rank is less than or equal to 10
+rankings %>% head(10)
+```
+
+Which players has been ranked in the Top 10 the most times?
+```{r}
+rankings %>% group_by(Player) %>% # group by player
+  filter(Top_10 == T) %>% # look at only players in the top 10 each year
+  summarize(n = n()) %>% # count number of occurrences
+  arrange(-n) %>% # sort by n descending 
+  head(10) %>% # display top 10
+  kable("simple") # display through kable
+```
+
+
+For Quarterbacks in the Top 10, what are their statistics like compared to non Top 10? (Let's just focus on Yards, Touchdowns, Interceptions, Rate, wins) 
+```{r}
+qb_metrics <- c("Player", "Year", "Rank", "Team", "Wins", "Yds", "TD", "Int", "Rate")
+# vector of specific stats to look at
+
+# recreate qb_Rank_stats with the "Top_10" column
+qb_rank_stats <- qb_stats %>% 
+  inner_join(rankings, by = c("Player", "Year"))
+
+qb_rank_stats %>% 
+  group_by(Top_10) %>% # group by top 10 vs not
+  select(qb_metrics) %>% # select the specific columns
+  summarize_all(mean) %>%  # get the average of each column
+  summarize_all(diff) %>% # find difference of Top 10 vs non top 10
+  kable("simple") # format with kable
+```
+
+
+Quarterbacks that are in the top 10 generally win three more games, throw 500 more yards, 9 more touchdowns, and 2 fewer interceptions. 
+
+
+Let's do the same for the Playmakers in the Top 10, what are their statistics like compared to non Top 10? (Let's just focus on Yards, Touchdowns, Interceptions, Rate, wins) 
+
+```{r}
+# vector of metrics to look at
+playmakers_metrics <- c("Player", "Year", "Team", "Position", "Rank", "Rush",
+                        "Rush.Yds", "Rush.TD", "Rec", "Rec.Yds", "Rec.TD",
+                        "YScm", "RRTD")
+
+# recreate joined data with "Top 10" column
+playmakers_rank_stats <- playmakers_rank_stats %>%
+  select(playmakers_metrics) %>%
+  mutate(Top_10 = ifelse(Rank <=10, T, F))
+
+playmakers_rank_stats %>% 
+  select(playmakers_metrics, Top_10) %>% # select metrics columns
+  group_by(Top_10) %>% # group by True and False
+  summarize_all(mean) %>% # get mean of each column
+  summarise_all(diff) # find difference of each column
+```
+This give us a look at all playmakers, but since each position does focus on different areas, splitting based on specific position would give us a better idea of what makes a "Top 10" player.
+
+```{r}
+# do the same thing as the last code cell but group by position as well
+playmakers_rank_stats %>% 
+  select(playmakers_metrics, Top_10) %>%
+  group_by(Position, Top_10) %>% summarize_all(mean) %>% 
+  summarise_all(diff)
+```
+
+* Running backs in the top 10 average 370+ more rushing yards, 4 touchdowns, and over 50 more receiving yards in total.
+
+* Tight ends in the top 10 average 300+ more receiving yards and almost 4 more touchdowns.
+
+* Wide receivers in the top 10 average 300+ more receiving yards and almost 2 more touchdowns. 
+
+
+What about defensive players?
+
+```{r}
+# add Top 10 column
+def_rank_stats <- def_rank_stats %>% mutate(Top_10 = ifelse(Rank <= 10, T, F))
+
+def_rank_stats %>% 
+  group_by(Position, Top_10) %>%  # group by position and by True and False
+  summarize_all(mean) %>% # find mean of each column
+  summarize_all(diff) # find difference of each column
+```
+
+* The largest difference in top 10 cornerbacks was interception yards (over 60 more)
+* The largest difference in top 10 defensive ends were about 5 more sacks, 20 more tackles, and 13 more QBHits.
+* Defensive tackles in the top 10 generally have around 2 more forced fumbles, almost 6 more sacks, and 9 QBHits
+* Linebackers in the top 10 generally have 4 more sacks, 12 fewer combined (comb) tackles, and 7 more QBHits
+* Safetys in the top 10 generally have 33 fewer combined (comb) tackles, almost 5 more interceptions, and 90 more interception yards
+
+
+## Visualization I
+
+Which quarterback metric is the most indicative of a players' ranking?
+We can first start off by creating a correlation matrix and seeing which chart has the strongest correlation with rank
+
+```{r}
+library(GGally)
+qb_rank_stats %>% 
+  select(qb_metrics, -Player, -Team, -Year) %>% # only quantitative variables
+  ggpairs() # create correlation matrix
+```
+
+Wins has the highest correlation coefficient out of all of the statistics. Touchdowns was the second closest attribute. A plot of Wins against Ranking will be created to better see the relationship.
+
+```{r}
+qb_rank_stats %>% 
+  select(qb_metrics, -Player, -Team) %>% # same selection
+  ggplot(aes(x = Wins, y = Rank, size = TD)) + # set variables
+  geom_point(alpha = 0.7) + # reduce opacity of points
+  geom_smooth(method = "lm") + # add line of best fit
+  labs(title = "Wins versus Rank") # add title
+```
+
+The relationship isn't very strong, however, since there is a finite number of wins per season, faceting the graph by year may garner better results
+
+```{r}
+qb_rank_stats %>% 
+  select(qb_metrics, -Player, -Team) %>% # select same columns
+  ggplot(aes(x = Wins, y = Rank, size = TD)) + # set variables
+  geom_point(alpha = 0.7) + # reduce opacity 
+  geom_smooth(stat = "identity", size = 1) + # add connecting line and make thinner
+  labs(title = "Quarterbacks Wins and Ranking Year over Year") + # add title
+  scale_x_continuous(n.breaks = 8) + # make 8 breaks for x acis
+  facet_wrap("Year") # facet by year
+```
+
+
+This visualization shows us that there is more of a correlation between Wins and Ranking for quarterbacks year over year. Winning defines a quarterback's success, therefore, if a player wins a lot of games (leads the league), they are most likely to be considered the best player in the NFL for that season. While there are certainly some outliers, these can be attributed to a couple of different possibilities. One reason could be that the player did not play in all 16 (now 17) games in the regular season, therefore their total wins was not as high. Overall, a quarterback's success seems to be heavily ranked by if they are a winner or not.  
+
+
+## Visualization II
+
+Let's take a look at scrimmage yards (receiving and rushing yards) and if they have any relation to playmakers' (wide receivers, running backs, and tight ends) ranking. 
+
+```{r}
+playmakers_rank_stats %>%
+  ggplot(aes(x = YScm, y = Rank)) + # set plot variables
+  geom_point(alpha = 0.5, size = 5) + # reduce point opacity
+  geom_smooth(method = "lm") + # add line of best fit
+  labs(title = "Scrimmage Yards versus Rank")
+```
+
+There is a weak relationship shown. Separating by position may help us identify a stronger relationship. 
+
+```{r}
+playmakers_rank_stats %>%
+  ggplot(aes(x = YScm, y = Rank, color = Position)) + # set color as position
+  geom_point(alpha = 0.5, size = 5) + # reduce opacity
+  geom_smooth(method = "lm") + # add line of best fit
+  labs(title = "Scrimmage Yards versus Rank") # add title 
+```
+
+There are stronger relationships shown but it is a bit hard to see as the visualization is very busy. Facet this graph to see each graph more clearly. Also add in point size as total touchdowns (RRTD)
+
+```{r}
+playmakers_rank_stats %>%
+  ggplot(aes(x = YScm, y = Rank, color = Position, size = RRTD)) +  # set variables
+  geom_point(alpha = 0.5) + # reduce opacity and size
+  geom_smooth(method = "lm") + # add line of best fit
+  scale_y_continuous(breaks = c(0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100),#set y axis
+                     limits = c(0, 110)) + # set y limits
+  scale_x_continuous(n.breaks = 2500/500, limit = c(0, 2500)) + # set x axis and limits
+  labs(title = "Playmakers Rank versus Scrimmage Yards", # add title and axis labels
+       x = "Scrimmage Yards", y = "Ranking") + facet_wrap("Position")
+```
+
+The wide receivers, tight ends, and running backs have different standards when ranking them overall. For example, a player that has 1000 scrimmage yards will be around rank 50 as a tight end, 60 as a wide receiver, and around 65 as a running back. This could be since running backs are typically also catching passes out of the backfield which is an increase in yards. While some wide receivers will also run the ball time to time, it is not a very common occurrence like a running back catching the ball. Tight ends also are blockers on a high percentage of plays which takes away from their chances of catching the ball and gaining more receiving yards. It is also very rare to see a tight end run the ball out of the back field meaning that their scrimmage yards are almost exclusively receiving yards. Additionally, it can be observed that overall, the number of touchdowns that the player scores is a pretty good indicator of their ranking as well.
+
+
+

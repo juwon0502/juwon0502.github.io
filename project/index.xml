@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Projects on Chris Turner</title>
+    <link>/project/</link>
+    <description>Recent content in Projects on Chris Turner</description>
+    <generator>Hugo -- gohugo.io</generator>
+    <language>en-US</language>
+    <lastBuildDate>Wed, 04 May 2022 00:00:00 +0000</lastBuildDate><atom:link href="/project/index.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>Juwon Lee Project 1</title>
+      <link>/project/project1/</link>
+      <pubDate>Wed, 04 May 2022 00:00:00 +0000</pubDate>
+      
+      <guid>/project/project1/</guid>
+      <description>1. IntroductionEach year, the NFL releases a list of the “Top 100 Players” of the past season. The list is created through voting by players and players only. As an avid football fan, I wanted to take a look at if the rankings are determined as easily as the players with the best statistics.
+Data was collected through a python web scraping script using BS4.Ranking data was collected from https://en.</description>
+    </item>
+    
+    <item>
+      <title>Project 2</title>
+      <link>/project/project2/</link>
+      <pubDate>Tue, 01 Dec 2020 00:00:00 +0000</pubDate>
+      
+      <guid>/project/project2/</guid>
+      <description>Test Project 2</description>
+    </item>
+    
+  </channel>
+</rss>
