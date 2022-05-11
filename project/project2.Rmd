@@ -1,8 +1,350 @@
 ---
-title: "Project 2"
-author: "Me"
-date: "2020-12-01"
+title: "Juwon Lee Project 2"
+date: "`r Sys.Date()`"
 output: html_document
 ---
 
-## Test Project 2
+```{r setup, include=FALSE}
+# The following code is a basic setup for your document
+# You won't have to edit it (unless you want to!)
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, fig.align = "center", warning = F, message = F, R.options=list(max.print=100, dplyr.print_max=100))
+```
+
+# NFL Top 100 Classification and Prediction
+
+## 1. Introduction
+
+Each year, the NFL releases a list of the "Top 100 Players" of the past season. The list is created through voting by players and players only. As an avid football fan, I wanted to take a look at if the rankings are determined as easily as the players with the best statistics. 
+
+
+Data was collected through a python web scraping script using BS4. 
+Ranking data was collected from https://en.wikipedia.org/wiki/NFL_Top_100
+All statistical data was collected from https://www.pro-football-reference.com/players/
+
+
+For the ranking data: it contains a list of each player that has been featured on the list. The columns are years from 2010-2021 (the years the rankings have been announced) and in those columns include their team, position, and ranking on the list. 
+
+Position abbreviations:
+
+* QB = Quarterback
+* RB = Running Back
+* WR = Wide Receiver
+* TE = Tight End
+* Playmakers = RB + WR + TE
+* OT = Offensive Tackle
+* G = Gaurd
+* C = Center
+
+
+* DE = Defenseive End
+* DT = Defenseive Tackle
+* LB = Linebacker
+* S = Safety
+* CB = Corner Back
+* K = Kicker
+
+Each statistics dataset (ending in _stats) include position specific performance metrics. Quarterbacks track passing stats, playmakers have rushing and receiving stats, and defensive players share all defensive stats (such as tackling, interceptions, etc.)
+
+I expect that the rankings will not follow direct trends with any specific statistic as there is so much more to a player's performance than what shows up on the statsheet. 
+
+For this project, I will be focusing only on quarterbacks and determining if their general ranking can be predicted based on their end of season statistics. 
+
+```{r, echo=FALSE}
+# Call necessary packages
+library(tidyverse)
+library(knitr)
+library(factoextra)
+```
+
+## Read in data
+
+```{r}
+# read in data of rankings and statistics
+rankings <- read.csv("./Data/Top 100 Players Master Dataset.csv")
+qb_stats <- read.csv("./Data/qb_stats.csv")
+
+head(rankings,10) # see first 10 rows of the rankings dataset
+```
+Data is all read in properly
+
+## Clean Data
+
+Join Stats data along with ranking data
+```{r}
+qb_rank_stats <- qb_stats %>% inner_join(rankings, by = c("Player", "Year"))
+```
+
+## Exploratory Data Analysis
+
+Create a "Top 10" variable
+
+Holding a ranking in the Top 10 of each year is a coveted achievement. Let's classify which players are in the Top 10
+```{r}
+rankings <- rankings %>% 
+  mutate(Top10 = ifelse(Rank <= 10, 1, 0)) # create new column if rank is less than or equal to 10
+rankings %>% head(10)
+```
+
+```{r}
+qb_metrics <- c("Player", "Year", "Rank", "Team", "Wins", "Yds", "TD", "Int", "Rate")
+# vector of specific stats to look at
+
+# recreate qb_Rank_stats with the "Top_10" column
+qb_rank_stats <- qb_stats %>% 
+  inner_join(rankings, by = c("Player", "Year"))
+```
+
+Which quarterback metric is the most indicative of a players' ranking?
+We can first start off by creating a correlation matrix and seeing which chart has the strongest correlation with rank
+
+
+```{r}
+library(GGally)
+qb_rank_stats %>% 
+  select(qb_metrics, -Player, -Team, -Year) %>% # only quantitative variables
+  ggpairs() # create correlation matrix
+```
+
+*When trying to determine a player's rank, Wins has the highest correlation coefficient out of all of the statistics. Touchdowns was the second closest attribute. The two variables that have the highest correlation are touchdowns and yards. The two attributes that have the least correlation are touchdowns and interceptions. Overall, we can see that there are certain attributes that are best at predicting ranking. We will take Wins, Touchdowns, and Rate in order to try to cluster players together*
+
+## Clustering
+
+```{r}
+# prepare data to cluster
+qb_rank_stats2 <- qb_rank_stats %>% select(Wins, TD, Rate) %>% scale
+```
+
+Find the optimal number of clusters by both WSS and Silhouette Width
+```{r}
+# find optimal number of clusters through WSS
+fviz_nbclust(qb_rank_stats2, kmeans, method = "wss")
+```
+*The elbow appears to be the most round around 4 clusters*
+
+```{r}
+#find optimal number of clusters through silhouette
+fviz_nbclust(qb_rank_stats2, kmeans, method = "silhouette")
+```
+*Silhouette gives us that 4 is also the optimal number of clusters*
+
+Run K-Means with 4 clusters
+```{r}
+# call library
+library(cluster)
+
+# create 4 tiered groupings to see if we can cluster the players correctly
+qb_rank_stats <- qb_rank_stats %>% select(qb_metrics, Top10) %>% 
+  mutate(Grouping = ifelse(Rank == 100,4,Rank%/%25 + 1))
+
+# run K-Means clustering
+kmeans_results <- qb_rank_stats2 %>% kmeans(10)
+```
+
+```{r}
+# Use the function kmeans to find 4 clusters
+kmeans_results <- qb_rank_stats2 %>%
+  kmeans(4)
+
+kmeans_results
+
+# add cluster to qb_kmeans dataframe
+qb_kmeans <- qb_rank_stats %>% 
+  mutate(cluster = as.factor(kmeans_results$cluster))
+
+# display confusion matrix
+table(qb_kmeans$Grouping, qb_kmeans$cluster) %>% addmargins
+```
+
+Visualize clusters
+```{r}
+fviz_cluster(kmeans_results, data = qb_rank_stats2)
+```
+
+Visualize clusters based on pairwise combinations
+
+```{r}
+qb_kmeans %>%
+  ggplot(aes(Wins, TD, color = cluster)) +
+  geom_point(aes(shape = as.factor(Grouping)))
+
+qb_kmeans %>%
+  ggplot(aes(Wins, Rate, color = cluster)) +
+  geom_point(aes(shape = as.factor(Grouping)))
+
+qb_kmeans %>%
+  ggplot(aes(TD, Rate, color = cluster)) +
+  geom_point(aes(shape = as.factor(Grouping)))
+```
+*Touchdown and Wins (the two variables that had the highest correlation) seem to create the most accurate clusters when looking at pairwise combinations. The cluster seems to be able to predict the top group of quarterbacks the best, but struggles for the other 3 groupings. This could be because those rankings are more "random" in a sense as the top is where the more recognizable/notable players end up placing.*
+
+## Dimensionality Reductiom
+
+```{r}
+# prepare data for dimensionality reduction by selecting attributes and scaling
+qb_rank_stats3 <- qb_rank_stats %>% 
+  select(Wins, TD, Rate, Yds, Int, Rank) %>% 
+  mutate(Grouping = ifelse(Rank == 100, 4, Rank%/%25 +1)) %>%
+  select(-Rank, -Grouping) %>%
+  scale
+
+# run principal component analysis
+pca <- qb_rank_stats3 %>% prcomp()
+```
+
+```{r}
+# Get variance for each principal component
+get_eigenvalue(pca)
+```
+
+```{r}
+# visualize eigenvalue with Scree Plot
+fviz_eig(pca, addlabels = TRUE, ylim = c(0, 75))
+```
+*Keep the first two components as they add up to 80.38% *
+
+```{r}
+# Visualize contributions of the variables to the PCs
+get_pca_var(pca)$coord
+```
+Visualize top contributors to both PC1 and PC2
+```{r}
+fviz_contrib(pca, choice = "var", axes = 1, top = 5) # on PC1
+```
+
+```{r}
+fviz_contrib(pca, choice = "var", axes = 2, top = 5) # on PC2
+```
+*Dimension 1 focuses on the positive passing statistics of touchdowns and yards. The second dimension is heavily contributed by Interceptions. You can see in the overall table earlier that interceptions was by far the highest contributor to the second dimension. Since these are all passing categories, it's not as easy to find a clear distinction between the dimensions*
+
+## Classification
+
+Now, let's use classification techniques to predict if a quarterback will be a Top-10 Player or not. 
+
+```{r}
+# get data ready to do classification
+qb_rank_stats4 <- qb_rank_stats %>% select(-Grouping, -Year, -Team) %>% 
+  mutate(Top10 = ifelse(Rank <= 10, 1, 0)) %>% select(-Rank, Player)
+```
+
+### Logistic Regression
+```{r}
+# call necessary libraries
+library(plotROC)
+library(caret)
+
+# Fit Logistic Regression Model
+fit <- glm(as.factor(Top10) ~., data = qb_rank_stats4, family = "binomial")
+summary(fit)
+```
+
+Using the model we created, predict values 
+```{r}
+# Calculate a predicted probability
+log_qb <- qb_rank_stats %>% 
+  mutate(probability = predict(fit, type = "response"),
+         predicted = ifelse(probability > 0.5, 1, 0)) %>%
+  mutate(Top10 = ifelse(Rank <= 10, 1, 0)) %>%
+  select(qb_metrics,Top10, probability, predicted)
+head(log_qb)
+```
+Classification Accuracy
+```{r}
+# Use confusion matrix to determine classification accuracy
+table(log_qb$Top10, log_qb$predicted) %>% addmargins
+```
+*This logistic Regression Model has a classification accuracy of (109 + 31)/150 = 0.933*
+
+
+Plot ROC Chart
+```{r}
+ROC <- ggplot(log_qb) + 
+  geom_roc(aes(d = Top10, m = probability), n.cuts = 0)
+ROC
+```
+Calculate Area Under the Curve
+```{r}
+calc_auc(ROC)
+```
+*This AUC value tells us that this is a great model, however, since we are validating the data based on the same data used to create the model, this can be very likely overfitted. We can use another technique to get a more generalized accuracy.* 
+
+
+Let's also get a more generalized accuracy by performing cross validation. We will be using 10 folds. 
+```{r}
+k = 10 #150 rows, 10 folds, 15 rows per fold
+
+# get data prepared for cross validation
+data <- qb_rank_stats4[sample(nrow(qb_rank_stats4)), ]  %>% select(-Player)
+
+# create the k folds
+folds <- cut(seq(1:nrow(data)), breaks = k, labels = F)
+```
+
+```{r}
+diags_k <- NULL
+
+for(i in 1:k){
+  # Create training and test sets
+  train <- data[folds != i, ] # all observations except in fold i
+  test <- data[folds == i, ]  # observations in fold i
+  
+  # Train model on training set (all but fold i)
+  cv_fit <- glm(as.factor(Top10) ~., data = train, family = "binomial")
+  
+  # Test model on test set (fold i)
+  df <- data.frame(
+    probability = predict(cv_fit, newdata = test, type = "response"),
+    outcome = test$Top10
+  )
+  
+  # create ROC
+  lg_ROC <- ggplot(df) + 
+    geom_roc(aes(d = outcome, m = probability, n.cuts = 0))
+  
+  # save AUC values
+  diags_k[i] <- calc_auc(lg_ROC)$AUC
+}
+
+mean(diags_k)
+```
+*Our Logistic Regression Model had an overall 10-fold cross validation AUC value between 0.88 to 0.92 This puts the model as a border-line great model, therefore it can be argued that it can be used to predict if a quarterback will be a Top-10 player. However, having a larger dataset overall and dedicated training/testing data splits can help mitigate against overfitting*
+
+### KNN
+```{r}
+# create KNN model with 5 nearest-neighbors
+knn_fit <- knn3(factor(Top10 == 1, 
+                       levels = c("TRUE","FALSE")) ~ .,
+                data = qb_rank_stats4, 
+                k = 5)
+```
+
+
+```{r}
+# add predicted values to dataframe
+kNN_qb <- qb_rank_stats %>% 
+  mutate(proportion = predict(knn_fit, qb_rank_stats)[,2],
+         predicted = ifelse(proportion > 0.5, 0, 1)) %>%
+  select(qb_metrics, Top10, proportion, predicted)
+head(kNN_qb)
+```
+
+```{r}
+# get accuracy with confusion matrix
+table(kNN_qb$Top10, kNN_qb$predicted) %>% addmargins
+```
+*The Knn classifier has a classification accuracy of 121/150 = 0.8067*
+
+```{r}
+# plot ROC curve
+kNN_ROC <- ggplot(kNN_qb) + 
+  geom_roc(aes(d = Top10, m = predicted), n.cuts = 0)
+kNN_ROC
+```
+
+```{r}
+# calculate AUC
+calc_auc(kNN_ROC)
+```
+*The KNN model has an AUC of 0.6626 which would make this model a poor model in predicting if quarterbacks would be a Top-10 player based on their statistics. I believe this is because each year, the meta of the game is slightly different, making it hard to compare players from different years. A quarterback in 2010 plays a completely different game to a player who is playing now in 2022. So even if their stats are similar (close neighbors), in relation to the rest of the league, they may be ranked in a completely different range. *
+
+*The number of k-nearest neighbors was kept at 5 because if it was any lower, it would be very possible to overfit the data since we are evaluating on the same data that was used to induce the model. * 
+
